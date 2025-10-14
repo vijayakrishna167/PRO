@@ -3,6 +3,24 @@ import {ApiError} from '../utils/ApiError.js'
 import {User} from '../models/user.models.js'
 import {uploadOnCloudinary,deleteFromCloudinary} from '../utils/cloudinary.js'
 import {ApiResponse} from '../utils/ApiResponse.js'
+import jwt from 'jsonwebtoken'
+
+const geneerateAccessAndRefreshToken = async(userId)=>{
+   try {
+    const user= await User.findById(userId)
+    if(!user){
+     throw new ApiError(400,"couldn't find the user")
+    }
+    const accessToken = user.generateAccessToken()
+    const refreshToken = user.generateRefreshToken()
+ 
+    user.refreshToken = refreshToken
+    await user.save({validateBeforeSave:false})
+    return {accessToken,refreshToken}
+   } catch (error) {
+    throw new ApiError(500,"something went wrong while generating tokens")
+   }
+}
 
 const registerUser = asyncHandler(async(req,res)=>{
     //todo
@@ -71,6 +89,91 @@ const registerUser = asyncHandler(async(req,res)=>{
     }
 
 })
+
+const loginUser = asyncHandler(async (req,res)=>{
+    //get data from body
+    const {username, email, password}= req.body
+
+    //validation
+    if(!email){
+        throw new ApiError(400,"email name is required")
+    }
+    const user = await User.findOne({
+        $or: [{username}, {email}]
+    })
+    if(!user){
+        throw new ApiError(404,"user not found")
+    }
+
+    //validate password
+    const passwordValid = await user.isPasswordCorrect(password)
+
+    if(!passwordValid){
+        throw new ApiError(401, "invalid credentials")
+    }
+
+    const {accessToken, refreshToken} = await geneerateAccessAndRefreshToken(user._id)
+    const loggedInUser = await User.findById(user._id)
+    .select("-password -refreshToken")
+    if(!loggedInUser){
+        throw new ApiError(400,"login failed")
+    }
+
+    const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+    }
+    return res
+    .status(200)
+    .cookie("accessToken",accessToken,options)
+    .cookie("refreshToken",refreshToken,options)
+    .json(new ApiResponse(200,
+        {user : loggedInUser, accessToken, refreshToken},
+        "userLoggedin Successfully"))
+})
+
+const logoutUser = asyncHandler(async(req,res)=>{
+    await user.findByIdAndUpdate()
+    //neeed to come bck here after middleware video
+})
+
+const refreshAccessToken = asyncHandler(async(req,res)=>{
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken
+
+    if(!incomingRefreshToken){
+        throw new ApiError(401,"refresh token is required")
+    }
+    try {
+        const decodedToken = jwt.verify(
+            incomingRefreshToken,
+            process.env.REFRESH_TOKEN_SECRET,
+        )
+        const user = await User.findById(decodedToken?._id)
+        if(!user){
+            throw new ApiError(401,"invalid refresh token")
+        }
+        if(incomingRefreshToken !== user?.refreshToken){
+            throw new ApiError(401, "invalid refresh token")
+        }
+        const options = {
+            httpOnly : true,
+            secure : process.env.NODE_ENV === "production"
+        }
+        const {accessToken,refreshToken: newRefreshToken}=await geneerateAccessAndRefreshToken(user._id)
+        return res
+        .status(200)
+        .cookie("access token",accessToken,options)
+        .cookie("refresh token",newRefreshToken,options)
+        .json(new ApiResponse(200,
+            {accessToken,refreshToken:newRefreshToken},
+            "access token refreshed successfully"
+        ))
+    } catch (error) {
+        throw new ApiError(500, "something went wrong while refreshing access token")
+    }
+})
 export {
-    registerUser
+    registerUser,
+    loginUser,
+    refreshAccessToken
 }
