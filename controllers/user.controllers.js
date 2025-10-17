@@ -133,8 +133,23 @@ const loginUser = asyncHandler(async (req,res)=>{
 })
 
 const logoutUser = asyncHandler(async(req,res)=>{
-    await user.findByIdAndUpdate()
-    //neeed to come bck here after middleware video
+    await user.findByIdAndUpdate(
+        req.user._id,
+    {
+        $set:{
+            refreshToken:undefined,
+        },
+    },{new: true}
+    )
+    const options ={
+        httpOnly: true,
+        secure : process.env.NODE_ENV === "production"
+    }
+    return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken",options)
+    .json(new ApiResponse(200,{},"user loggedout successfully"))
 })
 
 const refreshAccessToken = asyncHandler(async(req,res)=>{
@@ -175,5 +190,6 @@ const refreshAccessToken = asyncHandler(async(req,res)=>{
 export {
     registerUser,
     loginUser,
-    refreshAccessToken
+    refreshAccessToken,
+    logoutUser
 }
